@@ -1,0 +1,242 @@
+import csv
+def get_number(prompt, minimum=0, maximum=None):
+    while True:
+        text = input(prompt).strip().replace("%", "")
+        try:
+            number = float(text)
+            if number >= minimum and (
+                    maximum is None or number <= maximum):
+                return number
+            print("Please enter a number from", minimum, "to", maximum)
+        except ValueError:
+            print("Please enter a valid number.")
+def get_filename(filenames):
+    while True:
+        filename = input(
+            "Enter a filename, or type done: "
+        ).strip()
+
+        if filename.lower() == "done":
+            return None
+
+        if filename.lower() in [
+                saved.lower() for saved in filenames]:
+            print("That file has already been entered.")
+            return ""
+        try:
+            with open(filename, encoding="utf-8") as file:
+                file.read()
+            return filename
+        except FileNotFoundError:
+            print(
+                "Sorry, that file could not be found. "
+                "Please enter that file again."
+            )
+        except OSError:
+            print(
+                "That filename is not valid. "
+                "Please enter the filename again."
+            )
+        except UnicodeDecodeError:
+            print("That file could not be read as a text file.")
+def read_dar(filename):
+    courses = []
+    warning = False
+    with open(filename, encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
+        headings = reader.fieldnames or []
+        if "Credits" in headings:
+            credit_column = "Credits"
+        elif "Credit" in headings:
+            credit_column = "Credit"
+        else:
+            print("Warning: The DAR file has no credit column.")
+            return courses
+        for row in reader:
+            try:
+                name = row["Course"].strip()
+                grade = float(row["Final Grade"])
+                credits = float(row[credit_column])
+                if name and 0 <= grade <= 100 and credits > 0:
+                    courses.append({
+                        "name": name,
+                        "grade": grade,
+                        "credits": credits,
+                        "completed": 100
+                    })
+                else:
+                    warning = True
+            except (ValueError, KeyError, AttributeError):
+                warning = True
+    if warning:
+        print(
+            "Warning: Some incomplete DAR information "
+            "was skipped."
+        )
+    return courses
+def read_d2l(filename):
+    with open(filename, encoding="utf-8") as file:
+        lines = file.readlines()
+    name = ""
+    achieved = 0
+    completed = 0
+    warning = False
+    for line in lines:
+        line = line.strip()
+        if line.endswith(" VR"):
+            name = line.replace(" VR", "")
+        parts = line.split()
+        slash_positions = [
+            position
+            for position in range(len(parts))
+            if parts[position] == "/"
+        ]
+        if len(slash_positions) >= 2:
+            second_slash = slash_positions[1]
+            try:
+                achieved += float(parts[second_slash - 1])
+                completed += float(parts[second_slash + 1])
+
+            except (ValueError, IndexError):
+                warning = True
+    if warning:
+        print(
+            "Warning: Some incomplete D2L information "
+            "was skipped."
+        )
+    if not name:
+        print(
+            "Warning: The course name could not be found in",
+            filename
+        )
+    elif completed == 0:
+        print(
+            "Warning: No completed assessments were found in",
+            filename
+        )
+    grade = achieved / completed * 100 if completed else 0
+    return name, round(grade, 2), round(completed, 2)
+def display_courses(courses):
+    print("\nACTIVE COURSES")
+    print("----------------------------------------")
+    for course in courses:
+        print("\n" + course["name"])
+        print("Current grade:", course["grade"], "%")
+        print("Credits:", course["credits"])
+        print("Course completed:", course["completed"], "%")
+def calculate_results(courses, goal):
+    total_credits = sum(
+        course["credits"]
+        for course in courses
+    )
+    projected = sum(
+        course["grade"] * course["credits"]
+        for course in courses
+    ) / total_credits
+    earned = sum(
+        course["grade"]
+        * course["credits"]
+        * course["completed"] / 100
+        for course in courses
+    )
+    remaining = sum(
+        course["credits"]
+        * (100 - course["completed"]) / 100
+        for course in courses
+    )
+    if remaining == 0:
+        needed = None
+    else:
+        needed = (
+            goal * total_credits - earned
+        ) / remaining
+
+    return round(projected, 2), needed
+def display_results(projected, goal, needed):
+    print("\nACADEMIC SUMMARY")
+    print("----------------------------------------")
+    print("Projected overall average:", projected, "%")
+    print("Desired overall average:", goal, "%")
+
+    if needed is None:
+        print(
+            "There is no remaining coursework, so the "
+            "overall average cannot be changed."
+        )
+
+    elif needed < 0:
+        print(
+            "You have already earned enough to reach "
+            "this goal."
+        )
+    elif needed > 100:
+        print(
+            "This goal is currently out of reach."
+        )
+        print(
+            "Consider retesting your lowest marks "
+            "if retesting is allowed."
+        )
+    else:
+        print(
+            "Average needed on remaining coursework:",
+            round(needed, 2),
+            "%"
+        )
+filenames = []
+while True:
+    new_filename = get_filename(filenames)
+    if new_filename is None:
+        break
+    if new_filename != "":
+        filenames.append(new_filename)
+if not filenames:
+    print(
+        "No files were entered, so calculating an "
+        "overall average is impossible."
+    )
+else:
+    courses = []
+    for filename in filenames:
+        with open(filename, encoding="utf-8") as file:
+            text = file.read()
+        if "Course,Final Grade" in text:
+            courses.extend(read_dar(filename))
+        elif "Grade Item" in text and "Weight Achieved" in text:
+            name, grade, completed = read_d2l(filename)
+            if name:
+                credits = get_number(
+                    "How many credits is "
+                    + name
+                    + " worth? ",
+                    0.01
+                )
+                courses.append({
+                    "name": name,
+                    "grade": grade,
+                    "credits": credits,
+                    "completed": completed
+                })
+        else:
+            print(
+                "Warning:",
+                filename,
+                "was not recognized as a DAR or D2L file.")
+    if not courses:
+        print(
+            "No usable course information was found, "
+            "so calculating an average is impossible."
+        )
+    else:
+        display_courses(courses)
+        goal = get_number(
+            "\nEnter your desired overall average "
+            "in percentages: ",
+            0,
+            100
+        )
+        projected, needed = calculate_results(
+            courses,
+            goal
+        )
+        display_results(projected, goal, needed)
